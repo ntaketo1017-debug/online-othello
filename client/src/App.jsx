@@ -13,7 +13,6 @@ function App() {
   const [turn, setTurn] = useState('B');
   const [roomId, setRoomId] = useState('');
   const [inputRoomId, setInputRoomId] = useState('');
-  const [username, setUsername] = useState('');
   const [players, setPlayers] = useState({ B: '', W: null });
   const [playerColor, setPlayerColor] = useState(null);
   const [statusText, setStatusText] = useState('ルームに参加または作成してください');
@@ -40,7 +39,7 @@ function App() {
     const roomParam = params.get('room');
     if (roomParam) {
       setInputRoomId(roomParam);
-      toast('招待リンクから来ましたね！名前を入れて参加を押してください。', { icon: '👋' });
+      toast('招待リンクから来ましたね！参加を押してください。', { icon: '👋' });
     }
   }, []);
 
@@ -276,12 +275,11 @@ function App() {
   };
 
   const startSinglePlayer = () => {
-    if (!username.trim()) { toast.error('名前を入力するか、「あなた」などで進めてください'); return; }
     setIsSinglePlayer(true);
     setRoomId('CPU_MATCH');
     setPlayerColor('B');
     setPlayers({ 
-      B: username || 'あなた', 
+      B: 'あなた', 
       W: `CPU (${botDifficulty === 'easy' ? '弱い' : botDifficulty === 'normal' ? '普通' : '強い'})` 
     });
     setBoard(INITIAL_BOARD);
@@ -292,17 +290,15 @@ function App() {
   };
 
   const createRoom = () => {
-    if (!username.trim()) { toast.error('名前を入力してください'); return; }
     const id = Math.random().toString(36).substring(2, 8).toUpperCase();
     setIsSinglePlayer(false);
-    socket.emit('create_room', { roomId: id, username });
+    socket.emit('create_room', { roomId: id, username: 'Player 1' });
   };
 
   const joinRoom = () => {
-    if (!username.trim()) { toast.error('名前を入力してください'); return; }
     if (inputRoomId) {
       setIsSinglePlayer(false);
-      socket.emit('join_room', { roomId: inputRoomId.toUpperCase(), username });
+      socket.emit('join_room', { roomId: inputRoomId.toUpperCase(), username: 'Player 2' });
     }
   };
 
@@ -337,13 +333,6 @@ function App() {
         
         {!playerColor ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            <input 
-              type="text" 
-              placeholder="あなたの名前（表示名）" 
-              value={username} 
-              onChange={e => setUsername(e.target.value)} 
-              maxLength={15}
-            />
             
             <div style={{ padding: '15px', background: 'rgba(0,0,0,0.1)', borderRadius: '10px' }}>
               <h3 style={{marginTop: 0, textAlign: 'center'}}>🔥 ひとりで遊ぶ</h3>

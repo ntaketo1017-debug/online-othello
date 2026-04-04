@@ -13,7 +13,7 @@ function App() {
   const [roomId, setRoomId] = useState('');
   const [inputRoomId, setInputRoomId] = useState('');
   const [username, setUsername] = useState('');
-  const [players, setPlayers] = useState({ B: 'Player 1', W: 'Player 2' });
+  const [players, setPlayers] = useState({ B: '', W: null });
   const [playerColor, setPlayerColor] = useState(null);
   const [statusText, setStatusText] = useState('ルームに参加または作成してください');
   const [theme, setTheme] = useState('glass');
@@ -288,11 +288,11 @@ function App() {
 
             <div className="info-bar" style={{fontSize: '1rem', marginBottom: '10px'}}>
               <div style={{textAlign: 'left'}}>
-                <span className="color-indicator B"></span> {players.B}<br/>
+                <span className="color-indicator B"></span> {players.B || '待機中...'}<br/>
                 <span style={{fontSize:'1.5rem'}}>{counts.bCount}</span>
               </div>
               <div style={{textAlign: 'right'}}>
-                <span className="color-indicator W"></span> {players.W || '---' }<br/>
+                <span className="color-indicator W"></span> {players.W || '待機中...' }<br/>
                 <span style={{fontSize:'1.5rem'}}>{counts.wCount}</span>
               </div>
             </div>

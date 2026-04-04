@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { io } from 'socket.io-client';
 import toast, { Toaster } from 'react-hot-toast';
 import { INITIAL_BOARD, getFlippableStones, getValidMoves, getCounts, getOpponent } from './gameLogic';
+import { getBestBotMove } from './botLogic';
 import { playPlaceSound, playFlipSound, playWinSound } from './soundEffects';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
@@ -19,6 +20,10 @@ function App() {
   const [theme, setTheme] = useState('glass');
   const [flippedStones, setFlippedStones] = useState([]);
   
+  // 1人プレイモード
+  const [isSinglePlayer, setIsSinglePlayer] = useState(false);
+  const [botDifficulty, setBotDifficulty] = useState('normal');
+
   // 履歴保存用
   const [history, setHistory] = useState([]);
   const boardRef = useRef(board);
@@ -29,7 +34,7 @@ function App() {
     turnRef.current = turn;
   }, [board, turn]);
 
-  // URLパラメータからのルームID取得
+  // URLパラメータからのルーム入室
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
@@ -43,6 +48,7 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
+  // ソケット通信
   useEffect(() => {
     socket.on('room_created', ({ roomId, color }) => {
       setRoomId(roomId);
@@ -67,23 +73,27 @@ function App() {
     });
 
     socket.on('stone_placed', ({ row, col, color }) => {
-      handleMove(row, col, color, false);
+      if (!isSinglePlayer) handleMove(row, col, color, false);
     });
 
     socket.on('board_updated', ({ board: newBoard, turn: nextTurn }) => {
-      setBoard(newBoard);
-      setTurn(nextTurn);
-      updateStatus(nextTurn, newBoard);
+      if (!isSinglePlayer) {
+        setBoard(newBoard);
+        setTurn(nextTurn);
+        updateStatus(nextTurn, newBoard);
+      }
     });
 
     socket.on('turn_passed', ({ turn: nextTurn }) => {
-      setTurn(nextTurn);
-      toast('相手がパスしました', { icon: '⏭️' });
-      setStatusText(`パスされました。${nextTurn === 'B' ? '黒' : '白'}のターン`);
+      if (!isSinglePlayer) {
+        setTurn(nextTurn);
+        toast('相手がパスしました', { icon: '⏭️' });
+        setStatusText(`パスされました。${nextTurn === 'B' ? '黒' : '白'}のターン`);
+      }
     });
 
-    // 「待った」の受信系
     socket.on('undo_requested', () => {
+      if (isSinglePlayer) return;
       toast((t) => (
         <span>
           相手から「待った」のリクエストが来ました！許可しますか？
@@ -95,7 +105,7 @@ function App() {
 
     socket.on('undo_accepted', () => {
       toast.success('「待った」が許可されました');
-      revertHistory();
+      revertHistory(false);
     });
 
     socket.on('undo_rejected', () => {
@@ -107,8 +117,10 @@ function App() {
     });
 
     socket.on('player_disconnected', () => {
-      toast.error('相手との通信が切断されました', { duration: 5000 });
-      setStatusText('相手との通信が切断されました');
+      if (!isSinglePlayer) {
+        toast.error('相手との通信が切断されました', { duration: 5000 });
+        setStatusText('相手との通信が切断されました');
+      }
     });
 
     return () => {
@@ -124,16 +136,56 @@ function App() {
       socket.off('error');
       socket.off('player_disconnected');
     };
-  }, [roomId, history]); // Dependencies needed for revertHistory
+  }, [roomId, history, isSinglePlayer]); 
 
-  const revertHistory = () => {
+  // シングルプレイでの CPU ターン監視
+  useEffect(() => {
+    if (isSinglePlayer && turn === 'W' && playerColor === 'B') {
+      // 少し考えてから打つ
+      const timer = setTimeout(() => {
+        const botMove = getBestBotMove(boardRef.current, 'W', botDifficulty);
+        if (botMove) {
+          handleMove(botMove[0], botMove[1], 'W', false);
+        } else {
+          // 置く場所がなければパス
+          toast('CPUがパスしました', { icon: '⏭️' });
+          const nextTurn = 'B';
+          setTurn(nextTurn);
+          updateStatus(nextTurn, boardRef.current);
+          
+          // プレイヤーも置けない場合は終了
+          checkAutoPass(boardRef.current, 'B');
+        }
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [turn, isSinglePlayer, playerColor, botDifficulty]);
+
+
+  const revertHistory = (localOnly = false) => {
     if (history.length > 0) {
-      const prev = history[history.length - 1];
-      setHistory(history.slice(0, -1));
-      setBoard(prev.board);
-      setTurn(prev.turn);
-      socket.emit('update_board', { roomId, board: prev.board, nextTurn: prev.turn });
-      updateStatus(prev.turn, prev.board);
+      if (isSinglePlayer) {
+        // CPU戦の場合は2手（1ターン）戻す必要がある。ただしhistoryには1手指すごとに保存される。
+        // ※CPU戦ではプレイヤー(B)の手番に戻すため、historyの中から Bの前の状態を探すか、単に2つPopする
+        let pops = 2; // 自分とCPUの手を戻す
+        if (history.length < 2) pops = 1;
+        
+        const prevIndex = Math.max(0, history.length - pops);
+        const prev = history[prevIndex];
+        setHistory(history.slice(0, prevIndex));
+        setBoard(prev.board);
+        setTurn('B'); // 強制的に自分のターンにする
+        updateStatus('B', prev.board);
+      } else {
+        const prev = history[history.length - 1];
+        setHistory(history.slice(0, -1));
+        setBoard(prev.board);
+        setTurn(prev.turn);
+        if (!localOnly) {
+          socket.emit('update_board', { roomId, board: prev.board, nextTurn: prev.turn });
+        }
+        updateStatus(prev.turn, prev.board);
+      }
     }
   };
 
@@ -142,6 +194,13 @@ function App() {
       toast.error('戻れる履歴がありません');
       return;
     }
+    
+    if (isSinglePlayer) {
+      revertHistory(true);
+      toast.success('待った！手元を戻しました');
+      return;
+    }
+
     toast('相手に「待った」をリクエストしました...', { icon: '⏳' });
     socket.emit('undo_request', roomId);
   };
@@ -149,7 +208,7 @@ function App() {
   const updateStatus = (currentTurn, currentBoard) => {
     const counts = getCounts(currentBoard);
     if (getValidMoves(currentBoard, 'B').length === 0 && getValidMoves(currentBoard, 'W').length === 0) {
-      playWinSound(); // 試合終了音
+      playWinSound(); 
       if (counts.bCount > counts.wCount) setStatusText('黒の勝ち！');
       else if (counts.wCount > counts.bCount) setStatusText('白の勝ち！');
       else setStatusText('引き分け！');
@@ -185,12 +244,13 @@ function App() {
     setTurn(nextTurn);
     updateStatus(nextTurn, newBoard);
 
-    if (isLocal) {
+    if (isLocal && !isSinglePlayer) {
       socket.emit('place_stone', { roomId, row: r, col: c, color });
       socket.emit('update_board', { roomId, board: newBoard, nextTurn });
-      
-      checkAutoPass(newBoard, nextTurn);
     }
+
+    // パス判定
+    checkAutoPass(newBoard, nextTurn);
   };
 
   const checkAutoPass = (currentBoard, currentTurn) => {
@@ -200,7 +260,9 @@ function App() {
         setTimeout(() => {
           toast.error(`${currentTurn === 'B' ? '黒' : '白'}は置ける場所がないためパスになります`);
           setTurn(nextTurn);
-          socket.emit('pass_turn', { roomId, nextTurn });
+          if (!isSinglePlayer && currentTurn === playerColor) {
+             socket.emit('pass_turn', { roomId, nextTurn });
+          }
           updateStatus(nextTurn, currentBoard);
         }, 800);
       }
@@ -213,15 +275,33 @@ function App() {
     handleMove(r, c, playerColor, true);
   };
 
+  const startSinglePlayer = () => {
+    if (!username.trim()) { toast.error('名前を入力するか、「あなた」などで進めてください'); return; }
+    setIsSinglePlayer(true);
+    setRoomId('CPU_MATCH');
+    setPlayerColor('B');
+    setPlayers({ 
+      B: username || 'あなた', 
+      W: `CPU (${botDifficulty === 'easy' ? '弱い' : botDifficulty === 'normal' ? '普通' : '強い'})` 
+    });
+    setBoard(INITIAL_BOARD);
+    setTurn('B');
+    setHistory([]);
+    setStatusText('CPU対戦開始！黒（あなた）のターン');
+    toast.success('CPU対戦を開始します！', { icon: '🔥' });
+  };
+
   const createRoom = () => {
     if (!username.trim()) { toast.error('名前を入力してください'); return; }
     const id = Math.random().toString(36).substring(2, 8).toUpperCase();
+    setIsSinglePlayer(false);
     socket.emit('create_room', { roomId: id, username });
   };
 
   const joinRoom = () => {
     if (!username.trim()) { toast.error('名前を入力してください'); return; }
     if (inputRoomId) {
+      setIsSinglePlayer(false);
       socket.emit('join_room', { roomId: inputRoomId.toUpperCase(), username });
     }
   };
@@ -229,11 +309,15 @@ function App() {
   const copyInviteLink = () => {
     const url = `${window.location.origin}/?room=${roomId}`;
     navigator.clipboard.writeText(url).then(() => {
-      toast.success('招待リンクをコピーしました！友達に送ってください');
+      toast.success('招待リンクをコピーしました！友達に送してください');
     }).catch(() => {
       toast.error('コピーに失敗しました');
     });
   };
+
+  const quitGame = () => {
+     window.location.href = '/';
+  }
 
   const validMoves = playerColor === turn ? getValidMoves(board, playerColor) : [];
   const counts = getCounts(board);
@@ -260,24 +344,40 @@ function App() {
               onChange={e => setUsername(e.target.value)} 
               maxLength={15}
             />
-            <button className="btn" onClick={createRoom}>新しく部屋を作成する</button>
-            <div style={{ textAlign: 'center', opacity: 0.8, fontSize: '0.9rem' }}>--- または ---</div>
-            <input 
-              type="text" 
-              placeholder="ルームIDを入力" 
-              value={inputRoomId} 
-              onChange={e => setInputRoomId(e.target.value)} 
-            />
-            <button className="btn" onClick={joinRoom} style={{background: 'var(--p2-stone)', color: 'var(--bg-color)'}}>
-              入力した部屋に参加する
-            </button>
+            
+            <div style={{ padding: '15px', background: 'rgba(0,0,0,0.1)', borderRadius: '10px' }}>
+              <h3 style={{marginTop: 0, textAlign: 'center'}}>🔥 ひとりで遊ぶ</h3>
+              <select style={{marginBottom: '10px'}} value={botDifficulty} onChange={e => setBotDifficulty(e.target.value)}>
+                <option value="easy">難易度：弱い</option>
+                <option value="normal">難易度：普通</option>
+                <option value="hard">難易度：強い</option>
+              </select>
+              <button className="btn" onClick={startSinglePlayer} style={{background: '#e91e63'}}>CPUと対戦する</button>
+            </div>
+
+            <div style={{ padding: '15px', background: 'rgba(0,0,0,0.1)', borderRadius: '10px' }}>
+              <h3 style={{marginTop: 0, textAlign: 'center'}}>🌐 誰かと遊ぶ</h3>
+              <button className="btn" onClick={createRoom} style={{marginBottom: '10px'}}>新しく部屋を作成する</button>
+              <div style={{ textAlign: 'center', opacity: 0.8, fontSize: '0.9rem', marginBottom: '10px' }}>--- または ---</div>
+              <input 
+                type="text" 
+                placeholder="ルームIDを入力" 
+                value={inputRoomId} 
+                onChange={e => setInputRoomId(e.target.value)} 
+                style={{marginBottom: '10px'}}
+              />
+              <button className="btn" onClick={joinRoom} style={{background: 'var(--p2-stone)', color: 'var(--bg-color)'}}>
+                入力した部屋に参加する
+              </button>
+            </div>
+            
             <div className="status" style={{ fontSize: '1rem', marginTop: '10px' }}>{statusText}</div>
           </div>
         ) : (
           <>
             <div className="status">{statusText}</div>
             
-            {!players.W && roomId && (
+            {!players.W && roomId && !isSinglePlayer && (
               <div style={{ textAlign: 'center', marginBottom: '10px' }}>
                 <p>ルームID: <strong>{roomId}</strong></p>
                 <button onClick={copyInviteLink} style={{ padding: '8px', cursor: 'pointer', borderRadius: '5px', background: 'var(--button-bg)', border: 'none', color: '#fff' }}>
@@ -324,13 +424,19 @@ function App() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '15px' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '15px' }}>
               <button 
                 onClick={requestUndo} 
                 disabled={history.length === 0}
                 style={{ padding: '8px 15px', borderRadius: '8px', border: 'none', background: '#e0e0e0', color: '#333', cursor: history.length === 0 ? 'not-allowed' : 'pointer' }}
               >
-                ↩️ 待ったをリクエスト
+                ↩️ 待った
+              </button>
+              <button 
+                onClick={quitGame}
+                style={{ padding: '8px 15px', borderRadius: '8px', border: 'none', background: '#f44336', color: '#fff', cursor: 'pointer' }}
+              >
+                終了する
               </button>
             </div>
           </>

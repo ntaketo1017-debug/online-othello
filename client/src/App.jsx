@@ -27,11 +27,13 @@ function App() {
   const [history, setHistory] = useState([]);
   const boardRef = useRef(board);
   const turnRef = useRef(turn);
+  const playersRef = useRef(players); // Track dynamically for waiting CPU status
 
   useEffect(() => {
     boardRef.current = board;
     turnRef.current = turn;
-  }, [board, turn]);
+    playersRef.current = players;
+  }, [board, turn, players]);
 
   // URLパラメータからのルーム入室
   useEffect(() => {
@@ -46,6 +48,9 @@ function App() {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
+
+  // 待機中のCPU戦フラグ（動的評価用）
+  const getIsWaitingMiniGame = () => (!isSinglePlayer && roomId && !playersRef.current.W);
 
   // ソケット通信
   useEffect(() => {
@@ -68,15 +73,17 @@ function App() {
       setPlayers(newPlayers);
       setHistory([]);
       setStatusText('対戦開始！黒のターン');
-      toast.success('対戦相手が見つかりました！ゲーム開始！');
+      toast.success('対戦相手が見つかりました！ゲーム開始！', { icon: '⚔️', duration: 4000 });
     });
 
     socket.on('stone_placed', ({ row, col, color }) => {
-      if (!isSinglePlayer) handleMove(row, col, color, false);
+      if (!isSinglePlayer && !getIsWaitingMiniGame()) {
+          handleMove(row, col, color, false);
+      }
     });
 
     socket.on('board_updated', ({ board: newBoard, turn: nextTurn }) => {
-      if (!isSinglePlayer) {
+      if (!isSinglePlayer && !getIsWaitingMiniGame()) {
         setBoard(newBoard);
         setTurn(nextTurn);
         updateStatus(nextTurn, newBoard);
@@ -84,7 +91,7 @@ function App() {
     });
 
     socket.on('turn_passed', ({ turn: nextTurn }) => {
-      if (!isSinglePlayer) {
+      if (!isSinglePlayer && !getIsWaitingMiniGame()) {
         setTurn(nextTurn);
         toast('相手がパスしました', { icon: '⏭️' });
         setStatusText(`パスされました。${nextTurn === 'B' ? '黒' : '白'}のターン`);
@@ -92,7 +99,7 @@ function App() {
     });
 
     socket.on('undo_requested', () => {
-      if (isSinglePlayer) return;
+      if (isSinglePlayer || getIsWaitingMiniGame()) return;
       toast((t) => (
         <span>
           相手から「待った」のリクエストが来ました！許可しますか？
@@ -116,7 +123,7 @@ function App() {
     });
 
     socket.on('player_disconnected', () => {
-      if (!isSinglePlayer) {
+      if (!isSinglePlayer && !getIsWaitingMiniGame()) {
         toast.error('相手との通信が切断されました', { duration: 5000 });
         setStatusText('相手との通信が切断されました');
       }
@@ -137,43 +144,44 @@ function App() {
     };
   }, [roomId, history, isSinglePlayer]); 
 
-  // シングルプレイでの CPU ターン監視
+  // シングルプレイ・待機中の CPU ターン監視
   useEffect(() => {
-    if (isSinglePlayer && turn === 'W' && playerColor === 'B') {
-      // 少し考えてから打つ
+    const isWaitingMiniGame = getIsWaitingMiniGame();
+    if ((isSinglePlayer || isWaitingMiniGame) && turn === 'W' && playerColor === 'B') {
+      
+      const difficultyToUse = isWaitingMiniGame ? 'hard' : botDifficulty;
+      
       const timer = setTimeout(() => {
-        const botMove = getBestBotMove(boardRef.current, 'W', botDifficulty);
+        // もしこの1秒の間に相手が入ってきて waiting 状態が解除されたら打たない
+        if (getIsWaitingMiniGame() === false && isSinglePlayer === false) return;
+
+        const botMove = getBestBotMove(boardRef.current, 'W', difficultyToUse);
         if (botMove) {
           handleMove(botMove[0], botMove[1], 'W', false);
         } else {
-          // 置く場所がなければパス
           toast('CPUがパスしました', { icon: '⏭️' });
           const nextTurn = 'B';
           setTurn(nextTurn);
           updateStatus(nextTurn, boardRef.current);
-          
-          // プレイヤーも置けない場合は終了
-          checkAutoPass(boardRef.current, 'B');
+          checkAutoPass(boardRef.current, 'B', isWaitingMiniGame);
         }
       }, 800);
       return () => clearTimeout(timer);
     }
-  }, [turn, isSinglePlayer, playerColor, botDifficulty]);
-
+  }, [turn, isSinglePlayer, players.W, roomId, playerColor, botDifficulty]);
 
   const revertHistory = (localOnly = false) => {
     if (history.length > 0) {
-      if (isSinglePlayer) {
-        // CPU戦の場合は2手（1ターン）戻す必要がある。ただしhistoryには1手指すごとに保存される。
-        // ※CPU戦ではプレイヤー(B)の手番に戻すため、historyの中から Bの前の状態を探すか、単に2つPopする
-        let pops = 2; // 自分とCPUの手を戻す
+      const isWaitingMiniGame = getIsWaitingMiniGame();
+      if (isSinglePlayer || isWaitingMiniGame) {
+        let pops = 2;
         if (history.length < 2) pops = 1;
         
         const prevIndex = Math.max(0, history.length - pops);
         const prev = history[prevIndex];
         setHistory(history.slice(0, prevIndex));
         setBoard(prev.board);
-        setTurn('B'); // 強制的に自分のターンにする
+        setTurn('B'); 
         updateStatus('B', prev.board);
       } else {
         const prev = history[history.length - 1];
@@ -194,9 +202,10 @@ function App() {
       return;
     }
     
-    if (isSinglePlayer) {
+    const isWaitingMiniGame = getIsWaitingMiniGame();
+    if (isSinglePlayer || isWaitingMiniGame) {
       revertHistory(true);
-      toast.success('待った！手元を戻しました');
+      toast.success(isWaitingMiniGame ? 'ミニゲームの手を戻しました' : '待った！手元を戻しました');
       return;
     }
 
@@ -223,7 +232,6 @@ function App() {
     const flippable = getFlippableStones(currentBoard, r, c, color);
     if (flippable.length === 0) return;
 
-    // 履歴を保存
     setHistory(prev => [...prev, { board: currentBoard, turn: currentTurn }]);
 
     playPlaceSound();
@@ -243,23 +251,24 @@ function App() {
     setTurn(nextTurn);
     updateStatus(nextTurn, newBoard);
 
-    if (isLocal && !isSinglePlayer) {
+    const isWaitingMiniGame = getIsWaitingMiniGame();
+
+    if (isLocal && !isSinglePlayer && !isWaitingMiniGame) {
       socket.emit('place_stone', { roomId, row: r, col: c, color });
       socket.emit('update_board', { roomId, board: newBoard, nextTurn });
     }
 
-    // パス判定
-    checkAutoPass(newBoard, nextTurn);
+    checkAutoPass(newBoard, nextTurn, isWaitingMiniGame);
   };
 
-  const checkAutoPass = (currentBoard, currentTurn) => {
+  const checkAutoPass = (currentBoard, currentTurn, currentIsWaitingMiniGame) => {
     if (getValidMoves(currentBoard, currentTurn).length === 0) {
       const nextTurn = getOpponent(currentTurn);
       if (getValidMoves(currentBoard, nextTurn).length > 0) {
         setTimeout(() => {
           toast.error(`${currentTurn === 'B' ? '黒' : '白'}は置ける場所がないためパスになります`);
           setTurn(nextTurn);
-          if (!isSinglePlayer && currentTurn === playerColor) {
+          if (!isSinglePlayer && currentTurn === playerColor && !currentIsWaitingMiniGame) {
              socket.emit('pass_turn', { roomId, nextTurn });
           }
           updateStatus(nextTurn, currentBoard);
@@ -271,6 +280,8 @@ function App() {
   const onCellClick = (r, c) => {
     if (!playerColor || turn !== playerColor) return; 
     if (board[r][c] !== null) return;
+    
+    // 待機中であっても操作可能とし、自動的にミニゲームとして処理される
     handleMove(r, c, playerColor, true);
   };
 
@@ -305,7 +316,7 @@ function App() {
   const copyInviteLink = () => {
     const url = `${window.location.origin}/?room=${roomId}`;
     navigator.clipboard.writeText(url).then(() => {
-      toast.success('招待リンクをコピーしました！友達に送してください');
+      toast.success('招待リンクをコピーしました！友達に送ってください');
     }).catch(() => {
       toast.error('コピーに失敗しました');
     });
@@ -372,6 +383,9 @@ function App() {
                 <button onClick={copyInviteLink} style={{ padding: '6px', cursor: 'pointer', borderRadius: '5px', background: 'var(--button-bg)', border: 'none', color: '#fff' }}>
                   📋 招待リンクをコピー
                 </button>
+                <div style={{ fontSize: '0.85rem', opacity: 0.9, marginTop: '7px', fontWeight: 'bold' }}>
+                  💡待機中はCPU(強い)と盤面で遊べます↓
+                </div>
               </div>
             )}
 
@@ -381,7 +395,7 @@ function App() {
                 <span style={{fontSize:'1.5rem'}}>{counts.bCount}</span>
               </div>
               <div style={{textAlign: 'right'}}>
-                <span className="color-indicator W"></span> {players.W || '待機中...' }<br/>
+                <span className="color-indicator W"></span> {(!players.W && roomId && !isSinglePlayer) ? 'CPU(待機中)' : (players.W || '待機中...') }<br/>
                 <span style={{fontSize:'1.5rem'}}>{counts.wCount}</span>
               </div>
             </div>

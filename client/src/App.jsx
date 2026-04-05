@@ -149,7 +149,7 @@ function App() {
     const isWaitingMiniGame = getIsWaitingMiniGame();
     if ((isSinglePlayer || isWaitingMiniGame) && turn === 'W' && playerColor === 'B') {
       
-      const difficultyToUse = isWaitingMiniGame ? 'expert' : botDifficulty;
+      const difficultyToUse = isWaitingMiniGame ? 'grandmaster' : botDifficulty;
       
       const timer = setTimeout(() => {
         // もしこの1秒の間に相手が入ってきて waiting 状態が解除されたら打たない
@@ -291,7 +291,7 @@ function App() {
     setPlayerColor('B');
     setPlayers({ 
       B: 'あなた', 
-      W: `CPU (${botDifficulty === 'easy' ? '弱い' : botDifficulty === 'normal' ? '普通' : botDifficulty === 'hard' ? '強い' : '最強'})` 
+      W: `CPU (${botDifficulty === 'easy' ? '弱い' : botDifficulty === 'normal' ? '普通' : botDifficulty === 'hard' ? '強い' : botDifficulty === 'expert' ? '最強' : '覚醒'})` 
     });
     setBoard(INITIAL_BOARD);
     setTurn('B');
@@ -352,6 +352,7 @@ function App() {
                 <option value="normal">難易度：普通</option>
                 <option value="hard">難易度：強い</option>
                 <option value="expert">難易度：最強 (4手読み)</option>
+                <option value="grandmaster">難易度：覚醒 (5手＋戦術)</option>
               </select>
               <button className="btn" onClick={startSinglePlayer} style={{background: '#e91e63'}}>CPUと対戦する</button>
             </div>
@@ -385,7 +386,7 @@ function App() {
                   📋 招待リンクをコピー
                 </button>
                 <div style={{ fontSize: '0.85rem', opacity: 0.9, marginTop: '7px', fontWeight: 'bold' }}>
-                  💡待機中はCPU(最強)と盤面で遊べます↓
+                  💡待機中はCPU(覚醒)と盤面で遊べます↓
                 </div>
               </div>
             )}

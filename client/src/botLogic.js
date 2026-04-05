@@ -12,7 +12,6 @@ const BOARD_WEIGHTS = [
   [120, -20,  20,   5,   5,  20, -20, 120]
 ];
 
-// --- Minimax用 ヘルパー関数 ---
 function simulateMove(board, row, col, color) {
   const flippable = getFlippableStones(board, row, col, color);
   const newBoard = board.map(r => [...r]);
@@ -23,7 +22,7 @@ function simulateMove(board, row, col, color) {
   return newBoard;
 }
 
-// ターゲット(myColor)視点での盤面の有利さをスコア化
+// シンプルなポジションスコア
 function evaluateBoard(board, myColor) {
   let score = 0;
   const oppColor = getOpponent(myColor);
@@ -41,62 +40,78 @@ function evaluateBoard(board, myColor) {
   return score;
 }
 
-// アルファベータ枝刈りを伴うMinimax再帰関数
-function minimax(board, depth, alpha, beta, isMaximizing, myColor, oppColor, currentTurn) {
+// 高度なスコア（ポジションスコア ＋ モビリティ（着手可能数）の評価）
+function evaluateBoardAdvanced(board, myColor) {
+  let positionalScore = evaluateBoard(board, myColor);
+  
+  const oppColor = getOpponent(myColor);
+  const myMovesCount = getValidMoves(board, myColor).length;
+  const oppMovesCount = getValidMoves(board, oppColor).length;
+  
+  // 自分が打てる場所が多く、相手が打てないほど高い加点
+  // 重み: 着手手数1つにつき 10点 とする（角に匹敵するほど中盤で重要）
+  const mobilityScore = (myMovesCount - oppMovesCount) * 10;
+  
+  return positionalScore + mobilityScore;
+}
+
+function minimax(board, depth, alpha, beta, isMaximizing, myColor, oppColor, currentTurn, useAdvanced = false) {
   if (depth === 0) {
-    return evaluateBoard(board, myColor);
+    return useAdvanced ? evaluateBoardAdvanced(board, myColor) : evaluateBoard(board, myColor);
   }
 
   const validMoves = getValidMoves(board, currentTurn);
 
   if (validMoves.length === 0) {
-    // 置ける場所がない場合はパス
     const oppMoves = getValidMoves(board, getOpponent(currentTurn));
     if (oppMoves.length === 0) {
-      // 双方パス（ゲームオーバー）なら確実に評価を確定させる
-      return evaluateBoard(board, myColor);
+      // 完全終了時は、石の数の純粋な差に絶対的な価値を置く
+      let myCount = 0;
+      let oppCount = 0;
+      for(let r=0; r<8; r++){
+        for(let c=0; c<8; c++){
+          if(board[r][c] === myColor) myCount++;
+          else if(board[r][c] === oppColor) oppCount++;
+        }
+      }
+      return (myCount - oppCount) * 1000; 
     }
-    // 相手のターンとして探索を続行
-    return minimax(board, depth - 1, alpha, beta, !isMaximizing, myColor, oppColor, getOpponent(currentTurn));
+    return minimax(board, depth - 1, alpha, beta, !isMaximizing, myColor, oppColor, getOpponent(currentTurn), useAdvanced);
   }
 
   if (isMaximizing) {
     let maxEval = -Infinity;
     for (const move of validMoves) {
       const newBoard = simulateMove(board, move[0], move[1], currentTurn);
-      const ev = minimax(newBoard, depth - 1, alpha, beta, false, myColor, oppColor, oppColor);
+      const ev = minimax(newBoard, depth - 1, alpha, beta, false, myColor, oppColor, oppColor, useAdvanced);
       maxEval = Math.max(maxEval, ev);
       alpha = Math.max(alpha, ev);
-      if (beta <= alpha) break; // 枝刈り（これ以上計算しても意味がないルートを打ち切る）
+      if (beta <= alpha) break;
     }
     return maxEval;
   } else {
-    // 相手のターン（最もこちらが不利になる嫌な手を選んでくると仮定）
     let minEval = Infinity;
     for (const move of validMoves) {
       const newBoard = simulateMove(board, move[0], move[1], currentTurn);
-      const ev = minimax(newBoard, depth - 1, alpha, beta, true, myColor, oppColor, myColor);
+      const ev = minimax(newBoard, depth - 1, alpha, beta, true, myColor, oppColor, myColor, useAdvanced);
       minEval = Math.min(minEval, ev);
       beta = Math.min(beta, ev);
-      if (beta <= alpha) break; // 枝刈り
+      if (beta <= alpha) break;
     }
     return minEval;
   }
 }
-// ---------------------------------
 
 export function getBestBotMove(board, color, difficulty) {
   const validMoves = getValidMoves(board, color);
   if (validMoves.length === 0) return null;
 
   if (difficulty === 'easy') {
-    // 完全ランダム手
     const randomIndex = Math.floor(Math.random() * validMoves.length);
     return validMoves[randomIndex];
   }
 
   if (difficulty === 'normal') {
-    // ひっくり返せる枚数が最も多い手
     let maxFlips = -1;
     let bestMoves = [];
     for (const move of validMoves) {
@@ -113,7 +128,6 @@ export function getBestBotMove(board, color, difficulty) {
   }
 
   if (difficulty === 'hard') {
-    // 1手先読み（そのターンの盤面位置重みのみ）
     let maxScore = -Infinity;
     let bestMoves = [];
     for (const move of validMoves) {
@@ -134,20 +148,34 @@ export function getBestBotMove(board, color, difficulty) {
   }
 
   if (difficulty === 'expert') {
-    // 【最強モード】数手先読み（Minimax法 + Alpha-Beta枝刈り）
+    // 【最強】深さ4・ポジションスコアベース
     const oppColor = getOpponent(color);
     let bestScore = -Infinity;
     let bestMoves = [];
-    
-    // ブラウザの負荷を考慮し4手先読みとする（十分に強い）
     const depth = 4;
-
     for (const move of validMoves) {
       const newBoard = simulateMove(board, move[0], move[1], color);
-      // 次は相手のターンになるため isMaximizing = false
-      const score = minimax(newBoard, depth - 1, -Infinity, Infinity, false, color, oppColor, oppColor);
-      
-      // 同じスコアならランダム性を持たせるため配列に詰める
+      const score = minimax(newBoard, depth - 1, -Infinity, Infinity, false, color, oppColor, oppColor, false);
+      if (score > bestScore) {
+        bestScore = score;
+        bestMoves = [move];
+      } else if (score === bestScore) {
+        bestMoves.push(move);
+      }
+    }
+    const randomIndex = Math.floor(Math.random() * bestMoves.length);
+    return bestMoves[randomIndex];
+  }
+
+  if (difficulty === 'grandmaster') {
+    // 【超人（覚醒）】深さ5・高度なモビリティ評価込み
+    const oppColor = getOpponent(color);
+    let bestScore = -Infinity;
+    let bestMoves = [];
+    const depth = 5; 
+    for (const move of validMoves) {
+      const newBoard = simulateMove(board, move[0], move[1], color);
+      const score = minimax(newBoard, depth - 1, -Infinity, Infinity, false, color, oppColor, oppColor, true);
       if (score > bestScore) {
         bestScore = score;
         bestMoves = [move];

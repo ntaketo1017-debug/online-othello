@@ -367,9 +367,9 @@ function App() {
             <div className="status">{statusText}</div>
             
             {!players.W && roomId && !isSinglePlayer && (
-              <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-                <p>ルームID: <strong>{roomId}</strong></p>
-                <button onClick={copyInviteLink} style={{ padding: '8px', cursor: 'pointer', borderRadius: '5px', background: 'var(--button-bg)', border: 'none', color: '#fff' }}>
+              <div style={{ textAlign: 'center', marginBottom: '5px' }}>
+                <p style={{ margin: '0 0 5px 0' }}>ルームID: <strong>{roomId}</strong></p>
+                <button onClick={copyInviteLink} style={{ padding: '6px', cursor: 'pointer', borderRadius: '5px', background: 'var(--button-bg)', border: 'none', color: '#fff' }}>
                   📋 招待リンクをコピー
                 </button>
               </div>
@@ -386,7 +386,7 @@ function App() {
               </div>
             </div>
 
-            <div style={{ textAlign: 'center', marginBottom: '10px', fontSize: '1.1rem' }}>
+            <div style={{ textAlign: 'center', marginBottom: '5px', fontSize: '1rem' }}>
               あなたは <span className={`color-indicator ${playerColor}`}></span> です
             </div>
             
@@ -413,7 +413,7 @@ function App() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '15px' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '5px' }}>
               <button 
                 onClick={requestUndo} 
                 disabled={history.length === 0}

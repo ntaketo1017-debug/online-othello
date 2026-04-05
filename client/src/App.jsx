@@ -149,7 +149,7 @@ function App() {
     const isWaitingMiniGame = getIsWaitingMiniGame();
     if ((isSinglePlayer || isWaitingMiniGame) && turn === 'W' && playerColor === 'B') {
       
-      const difficultyToUse = isWaitingMiniGame ? 'grandmaster' : botDifficulty;
+      const difficultyToUse = isWaitingMiniGame ? 'expert' : botDifficulty;
       
       const timer = setTimeout(() => {
         // もしこの1秒の間に相手が入ってきて waiting 状態が解除されたら打たない
@@ -386,7 +386,7 @@ function App() {
                   📋 招待リンクをコピー
                 </button>
                 <div style={{ fontSize: '0.85rem', opacity: 0.9, marginTop: '7px', fontWeight: 'bold' }}>
-                  💡待機中はCPU(覚醒)と盤面で遊べます↓
+                  💡待機中はCPU(最強)と盤面で遊べます↓
                 </div>
               </div>
             )}
